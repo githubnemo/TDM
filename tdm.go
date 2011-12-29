@@ -1,23 +1,25 @@
 package main
 
 import (
+	"os"
 	"fmt"
 	"tdm"
 	"time"
+	"log"
+	"bytes"
+	"strconv"
 )
 
 const (
-	FRAME_TIME = 1 // seconds
-	SLOTS = 20
-	SLOT_TIME = float64(FRAME_TIME) / SLOTS // milliseconds
-	PACKET_SIZE = 33 // byte
-)
+	// Time per frame in seconds
+	FRAME_TIME = 1
 
-type Packet struct {
-	payload [24]byte	// user data
-	slot	byte	// slot index from 0-19
-	time	int64	// send time encoded in big endian
-}
+	// Number of slots per frame
+	SLOTS = 20
+
+	// Time per slot in nanoseconds
+	SLOT_TIME = int64((float64(FRAME_TIME) / SLOTS) * 10e9)
+)
 
 // milli => 10e3
 // micro => 10e6
@@ -30,15 +32,62 @@ func syncWithNextFrame() {
 }
 
 func syncWithSlotCenter(slot byte) {
-	ns := (slot * SLOT_TIME + SLOT_TIME/2) * 10e9
+	ns := int64(slot) * SLOT_TIME + SLOT_TIME/2
 
 	time.Sleep(ns)
 }
 
-// Wait for next frame, listen the whole frame for occupied slots
-func lookForNewSlot() {
+func syncWithSlotEnd(slot byte) {
+	ns := int64(slot) * SLOT_TIME + SLOT_TIME
 
+	time.Sleep(ns)
 }
+
+
+func readSlot(conn *MultiCastConn) (*Packet, bool, os.Error) {
+	byteSlice := make([]byte, PACKET_SIZE)
+	buffer := bytes.NewBuffer(byteSlice)
+
+	n, err := conn.Read(byteSlice)
+
+	if err != nil {
+		return nil, false, err
+	}
+
+	// timeout, assume empty
+	if n == 0 {
+		log.Println("Empty slot!")
+		return nil, true, nil
+	}
+
+	buffer.Write(byteSlice[:n])
+
+	// Grab some more bytes if we didn't get all
+	if n != PACKET_SIZE {
+		return nil, false, os.NewError(
+			fmt.Sprintf("Invalid packet size: %d", n))
+	}
+
+	packet, perr := NewPacketFromReader(buffer)
+
+	if perr != nil {
+		return nil, false, perr
+	}
+
+	return packet, false, nil
+}
+
+
+func sendPacket(conn *MultiCastConn, payload string, slot byte) os.Error {
+	ms := time.Nanoseconds() / 10e6
+
+	p := NewPacket([]byte(payload), slot, ms)
+
+	_, err := p.SendTo(conn)
+
+	return err
+}
+
 
 func main() {
 	team, station := 17, 1
@@ -56,49 +105,58 @@ func main() {
 	sink.Start()
 	defer sink.Stop()
 
-	sink.Feed(source.Data())
-	sink.Feed(source.Data())
-	sink.Feed(source.Data())
+	// Open network connection
+	ip := "225.10.1.2"
+	port := 15000
 
-	// TODO: open network connection
+	conn, cerr := JoinMulticast(ip, strconv.Itoa(port + team))
+
+	// Limit the max. read time to the slot time
+	conn.SetReadTimeout(SLOT_TIME)
+
+	if cerr != nil {
+		log.Fatal("Network join error:", cerr.String())
+	}
 
 	// initially use the first slot
-	currentSlot := 0
+	mySlot := byte(0)
 	currentPayload := source.Data()
+	searchNewSlot := false
 
 	for {
 		syncWithNextFrame()
 
-		syncWithSlotCenter(currentSlot)
+		for i:= byte(0); i < SLOTS; i++ {
+			// We have a good slot and this is our slot, send!
+			if i == mySlot && !searchNewSlot {
+				syncWithSlotCenter(mySlot)
+				sendPacket(conn, currentPayload, mySlot)
+			}
 
-		sendPacket(currentSlot, currentPayload)
+			packet, empty, err := readSlot(conn)
 
-		if(detectCollision(currentSlot, currentPayload)) {
-			// watch a full frame and determine which slot could be free
-			currentSlot = lookForNewSlot()
-		} else {
-			// fetch new data for the next run
-			currentPayload = source.Data()
+			if err != nil {
+				log.Fatalf("Error while reading slot %d: %s", i, err.String())
+			}
+
+			// Empty slot and in need of one? Take it!
+			if empty && searchNewSlot {
+				mySlot = i
+			}
+
+			stringPayload := string(packet.Payload[:])
+
+			// Detect collision
+			if(i == mySlot && stringPayload != currentPayload) {
+				searchNewSlot = true
+				sink.Feed(fmt.Sprintf("Collision in slot %d!", i))
+			} else {
+				currentPayload = source.Data()
+			}
+
+			sink.Feed(stringPayload)
+
+			syncWithSlotEnd(i)
 		}
 	}
-
-
-	/*
-
-   	frametime = 1 second
-	slottime = frametime / 20
-
-	TODO: receiving of messages
-
-    1. Open network connection on 15000 + team
-	loop {
-		1. Sync with next frame (wait till next second)
-		2. Build packet (initially assume slot 0)
-		3. Sync to slot middle (wait slottime/2 seconds)
-		4. Send packet
-		5. Listen frame (frametime - (slotnumber * slottime) seconds)
-		6. Determine new slot if necessary (collision detected)
-	}
-
-	*/
 }
