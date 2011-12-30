@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"fmt"
-	"net"
 	"log"
 	"flag"
 	"time"
@@ -59,33 +58,25 @@ func syncWithSlotEnd(frameBegin int64, slot byte) {
 }
 
 
-// Return a packet if there was one, return a nil packet
-// empty=true and a nil error if there was no packet and
-// the read timed out, return nil, false and an error
-// otherwise.
-func readSlot(conn *MultiCastConn) (*Packet, bool, os.Error) {
-	byteSlice := make([]byte, PACKET_SIZE)
+// Read SLOTS * PACKET_SIZE bytes from the connection and
+// return the first arrived packet.
+//
+// If there was more than one packet, collision will be true.
+func readSlot(conn *MultiCastConn) (p *Packet, collision bool, err os.Error) {
+	byteSlice := make([]byte, SLOTS * PACKET_SIZE)
 	buffer := bytes.NewBuffer(byteSlice)
 
+	// Read SLOTS*PACKET_SIZE bytes. Captures all packages
+	// that were sent in this time slot.
 	n, err := conn.Read(byteSlice)
 
 	if err != nil {
-		if err.(net.Error).Timeout() {
-			return nil, true, nil
-		}
 		return nil, false, err
-	}
-
-	// timeout, assume empty
-	if n == 0 {
-		log.Println("Empty slot!")
-		return nil, true, nil
 	}
 
 	buffer.Write(byteSlice[:n])
 
-	// Grab some more bytes if we didn't get all
-	if n != PACKET_SIZE {
+	if n < PACKET_SIZE {
 		return nil, false, os.NewError(
 			fmt.Sprintf("Invalid packet size: %d", n))
 	}
@@ -96,7 +87,7 @@ func readSlot(conn *MultiCastConn) (*Packet, bool, os.Error) {
 		return nil, false, perr
 	}
 
-	return packet, false, nil
+	return packet, n > PACKET_SIZE, nil
 }
 
 
@@ -109,6 +100,97 @@ func sendPacket(conn *MultiCastConn, payload []byte, slot byte) os.Error {
 
 	return err
 }
+
+
+func findFreeSlot(upcomingSlots []bool) (next byte, ok bool) {
+	for i,e := range upcomingSlots {
+		if !e {
+			return byte(i), true
+		}
+	}
+	return 0, false
+}
+
+
+func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
+	// initially use the first slot
+	nextSlot := byte(0)
+	currentPayload := source.Data()
+
+	searchNewSlot := true	// indicator that we need a new slot
+	packetSent := false		// indicator that a packet was sent in the current slot
+
+	upcomingSlots := make([]bool, SLOTS)
+
+
+	// Wait for next frame to begin and start process
+	syncWithNextFrame()
+
+	for {
+		frameBegin := frameBeginTime()
+
+		mySlot := nextSlot
+
+		// Log output
+		sink.Feed("Frame begin.")
+		go log.Println("Begin!")
+
+		for i:= byte(0); i < SLOTS; i++ {
+			go log.Println("Slot", i)
+
+			// We have a slot and the current slot is ours, send a packet
+			if i == mySlot && !searchNewSlot {
+				syncWithSlotCenter(frameBegin, mySlot)
+
+				// Determine new slot for next frame
+				if t, ok := findFreeSlot(upcomingSlots); !ok {
+					searchNewSlot = true
+
+				} else {
+					nextSlot = t
+					sendPacket(conn, currentPayload, nextSlot)
+					packetSent = true
+
+					go log.Println("Sent package!")
+				}
+			}
+
+			packet, collision, err := readSlot(conn)
+
+			if err != nil {
+				log.Fatalf("Error while reading slot %d: %s", i, err.String())
+			}
+
+			// I sent a packet on my slot, no collisions, packet sent!
+			if packet != nil && packetSent && i == mySlot && !collision {
+				packetSent = false
+
+				currentPayload = source.Data()
+			}
+
+			// Put every received packet in the sink
+			if packet != nil {
+				if packet.Slot < SLOTS {
+					upcomingSlots[packet.Slot] = false
+				}
+
+				sink.Feed(fmt.Sprintf("Received on slot %d: %s", i, packet.String()))
+				go log.Println("Received", packet.String())
+			}
+
+			// At the end of the frame: Search for free slot
+			if searchNewSlot && i == SLOTS-1 {
+				if t,ok := findFreeSlot(upcomingSlots); ok {
+					nextSlot = t
+					searchNewSlot = false
+				}
+			}
+
+			syncWithSlotEnd(frameBegin, i)
+		}
+	}
+}
+
 
 
 var g_station *int = flag.Int("station", 1, "Station number")
@@ -143,74 +225,17 @@ func main() {
 
 	conn, cerr := JoinMulticast(ip, strconv.Itoa(port + team))
 
+	if cerr != nil {
+		log.Fatal("JoinMulticast Error: ", cerr.String())
+	}
+
 	// Limit the max. read time to the slot time
 	log.Printf("Setting read timeout to: %d ns", SLOT_TIME)
 	conn.SetReadTimeout(SLOT_TIME)
 
 	if cerr != nil {
-		log.Fatal("Network join error:", cerr.String())
+		log.Fatal("Network join error: ", cerr.String())
 	}
 
-	// initially use the first slot
-	mySlot := byte(0)
-	currentPayload := source.Data()
-	searchNewSlot := false
-	packetSent := false
-
-	// Wait for next frame to begin and start process
-	syncWithNextFrame()
-
-	for {
-		frameBegin := frameBeginTime()
-		sink.Feed("Frame begin.")
-		go log.Println("Begin!")
-
-		for i:= byte(0); i < SLOTS; i++ {
-			go log.Println("Slot", i)
-
-			// We have a good slot and this is our slot, send!
-			if i == mySlot && !searchNewSlot {
-				syncWithSlotCenter(frameBegin, mySlot)
-				sendPacket(conn, currentPayload, mySlot)
-				packetSent = true
-				go log.Println("Sent package!")
-			}
-
-			packet, empty, err := readSlot(conn)
-
-			if err != nil {
-				log.Fatalf("Error while reading slot %d: %s", i, err.String())
-			}
-
-			// Empty slot and in need of one? Take it!
-			if empty && searchNewSlot {
-				go log.Println("Using this slot as my new slot:", i)
-				mySlot = i
-				searchNewSlot = false
-			}
-
-			// I sent a packet on my slot, look for collisions
-			if packet != nil && packetSent && i == mySlot {
-
-				packetSent = false
-
-				// Detect collision
-				if !packet.EqualPayload(currentPayload) {
-					searchNewSlot = true
-					sink.Feed(fmt.Sprintf("Collision in slot %d!", i))
-					go log.Println("Collision in slot", i)
-				} else {
-					currentPayload = source.Data()
-				}
-			}
-
-			// Put every received packet in the sink
-			if packet != nil {
-				sink.Feed(fmt.Sprintf("Received on slot %d: %s", i, packet.String()))
-				go log.Println("Received", packet.String())
-			}
-
-			syncWithSlotEnd(frameBegin, i)
-		}
-	}
+	receiveLoop(source, sink, conn)
 }
