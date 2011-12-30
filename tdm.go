@@ -162,6 +162,7 @@ func main() {
 
 	for {
 		frameBegin := frameBeginTime()
+		sink.Feed("Frame begin.")
 		go log.Println("Begin!")
 
 		for i:= byte(0); i < SLOTS; i++ {
@@ -205,7 +206,8 @@ func main() {
 
 			// Put every received packet in the sink
 			if packet != nil {
-				sink.Feed(packet.String())
+				sink.Feed(fmt.Sprintf("Received on slot %d: %s", i, packet.String()))
+				go log.Println("Received", packet.String())
 			}
 
 			syncWithSlotEnd(frameBegin, i)
