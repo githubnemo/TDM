@@ -10,31 +10,43 @@ type Sink struct {
 	team int				// Team number
 	station int				// Station number
 	logfile *os.File		// Logfile
-	incoming chan []byte	// Incoming log data
+	incoming chan string	// Incoming log data
+	stop chan bool			// Stop looping
 }
 
 func (s *Sink) Start() {
-	go s.doSink()
+	go s.sinkLoop()
 }
 
 func (s *Sink) Stop() {
+	close(s.incoming)
+
+	s.stop <- true
+
 	for len(s.incoming) > 0 {
-		s.doSink()
+		s.write(<-s.incoming)
 	}
 
 	s.logfile.Close()
 }
 
-func (s *Sink) doSink() {
-	select {
+func (s *Sink) sinkLoop() {
+	for {
+		select {
 		case v := <-s.incoming:
-			fmt.Fprintln(s.logfile, v)
-		default:
-			return
+			s.write(v)
+		case <-s.stop:
+			break
+		}
 	}
 }
 
-func (s* Sink) Feed(data []byte) {
+func (s *Sink) write(v string) {
+	fmt.Fprintln(s.logfile, v)
+}
+
+
+func (s* Sink) Feed(data string) {
 	s.incoming <- data
 }
 
@@ -54,6 +66,7 @@ func NewSink(team, station int, dir string) (*Sink, os.Error) {
 		team,
 		station,
 		file,
-		make(chan []byte, 32),
+		make(chan string, 32),
+		make(chan bool),
 	}, nil
 }
