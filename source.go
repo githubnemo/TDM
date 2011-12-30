@@ -8,9 +8,12 @@ type Source struct {
 	seq int
 }
 
-func (s *Source) Data() string {
+func (s *Source) Data() []byte {
 	defer func() { s.seq++ }()
-	return fmt.Sprintf("team %d-%d Message %d from us!", s.team, s.station, s.seq)
+
+	str := fmt.Sprintf("team %d-%d Message %d from us!", s.team, s.station, s.seq)
+
+	return []byte(str)
 }
 
 func NewSource(team, station int) *Source {

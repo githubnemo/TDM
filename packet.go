@@ -84,3 +84,8 @@ func (p *Packet) SendTo(w io.Writer) (int64, os.Error) {
 	return pbuf.WriteTo(w)
 }
 
+
+func (p *Packet) EqualPayload(other []byte) bool {
+	return len(other) == len(p.Payload) &&
+			bytes.Compare(other, p.Payload[:]) == 0
+}

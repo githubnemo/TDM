@@ -10,7 +10,7 @@ type Sink struct {
 	team int				// Team number
 	station int				// Station number
 	logfile *os.File		// Logfile
-	incoming chan string	// Incoming log data
+	incoming chan []byte	// Incoming log data
 }
 
 func (s *Sink) Start() {
@@ -34,7 +34,7 @@ func (s *Sink) doSink() {
 	}
 }
 
-func (s* Sink) Feed(data string) {
+func (s* Sink) Feed(data []byte) {
 	s.incoming <- data
 }
 
@@ -54,6 +54,6 @@ func NewSink(team, station int, dir string) (*Sink, os.Error) {
 		team,
 		station,
 		file,
-		make(chan string, 32),
+		make(chan []byte, 32),
 	}, nil
 }

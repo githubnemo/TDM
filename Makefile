@@ -7,9 +7,9 @@ include $(GOROOT)/src/Make.inc
 TARG=tdm
 GOFILES=\
 	tdm.go\
-	source.go\
 	network.go\
 	packet.go\
+	source.go\
 	sink.go
 
 include $(GOROOT)/src/Make.cmd

@@ -100,10 +100,10 @@ func readSlot(conn *MultiCastConn) (*Packet, bool, os.Error) {
 }
 
 
-func sendPacket(conn *MultiCastConn, payload string, slot byte) os.Error {
+func sendPacket(conn *MultiCastConn, payload []byte, slot byte) os.Error {
 	ms := time.Nanoseconds() / 1e6
 
-	p := NewPacket([]byte(payload), slot, ms)
+	p := NewPacket(payload, slot, ms)
 
 	_, err := p.SendTo(conn)
 
@@ -146,6 +146,7 @@ func main() {
 	currentPayload := source.Data()
 	searchNewSlot := false
 
+	// Wait for next frame to begin and start process
 	syncWithNextFrame()
 
 	for {
@@ -159,6 +160,7 @@ func main() {
 			if i == mySlot && !searchNewSlot {
 				syncWithSlotCenter(frameBegin, mySlot)
 				sendPacket(conn, currentPayload, mySlot)
+				go log.Println("Sent package!")
 			}
 
 			packet, empty, err := readSlot(conn)
@@ -170,23 +172,30 @@ func main() {
 			// Empty slot and in need of one? Take it!
 			if empty && searchNewSlot {
 				mySlot = i
+				searchNewSlot = false
 			}
 
 			// No empty slot, a packet was there
 			if packet != nil {
-				stringPayload := string(packet.Payload[:])
 
 				// Detect collision
-				if(i == mySlot && stringPayload != currentPayload) {
+				if(i == mySlot && packet.EqualPayload(currentPayload)) {
 					searchNewSlot = true
+					go log.Println("Collision in slot", i)
 					sink.Feed(fmt.Sprintf("Collision in slot %d!", i))
 				} else {
 					currentPayload = source.Data()
+					go log.Println("Everything went fine, sent data.")
 				}
 
-				sink.Feed(stringPayload)
+				// FIXME broken for reasons unknown, hangs at
+				// collision 16
+				//sink.Feed(stringPayload)
+
+				sink.Feed(packet.Payload[:])
 			}
 
+			go log.Println("Waiting for slot to finish")
 			syncWithSlotEnd(frameBegin, i)
 		}
 	}
