@@ -86,6 +86,7 @@ func (p *Packet) SendTo(w io.Writer) (int64, os.Error) {
 
 
 func (p *Packet) EqualPayload(other []byte) bool {
-	return len(other) == len(p.Payload) &&
-			bytes.Compare(other, p.Payload[:]) == 0
+	// <= because len(p.Payload) == cap(p.Payload) in every case
+	return len(other) <= len(p.Payload) &&
+			bytes.Compare(other, p.Payload[:len(other)]) == 0
 }
