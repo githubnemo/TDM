@@ -4,6 +4,7 @@ import (
 	"os"
 	"fmt"
 	"tdm"
+	"net"
 	"time"
 	"log"
 	"bytes"
@@ -11,39 +12,57 @@ import (
 )
 
 const (
-	// Time per frame in seconds
-	FRAME_TIME = 1
+	// Time per frame in nanoseconds
+	FRAME_TIME = 1 * 1e9
 
 	// Number of slots per frame
 	SLOTS = 20
 
 	// Time per slot in nanoseconds
-	SLOT_TIME = int64((float64(FRAME_TIME) / SLOTS) * 10e9)
+	SLOT_TIME = int64(FRAME_TIME / SLOTS)
 )
 
-// milli => 10e3
-// micro => 10e6
-// nano  => 10e9
+// milli => 1e3
+// micro => 1e6
+// nano  => 1e9
 
-func syncWithNextFrame() {
+
+// Wait for next frame and return start time of next frame in NS
+func syncWithNextFrame() int64 {
 	cns := time.Nanoseconds()
 
-	time.Sleep((cns / 10e9 + 1) * 10e9 - cns)
+	startns := (cns / 1e9 + 1) * 1e9
+
+	time.Sleep(startns - cns)
+
+	return startns
 }
 
-func syncWithSlotCenter(slot byte) {
-	ns := int64(slot) * SLOT_TIME + SLOT_TIME/2
-
-	time.Sleep(ns)
+// Return timestamp of current frame beginning
+func frameBeginTime() int64 {
+	return time.Nanoseconds() / 1e9 * 1e9
 }
 
-func syncWithSlotEnd(slot byte) {
-	ns := int64(slot) * SLOT_TIME + SLOT_TIME
+func syncWithSlotCenter(frameBegin int64, slot byte) {
+	waitNs := (frameBegin - time.Nanoseconds())
+	waitNs += int64(slot) * SLOT_TIME + SLOT_TIME / 2
 
-	time.Sleep(ns)
+	time.Sleep(waitNs)
 }
 
 
+func syncWithSlotEnd(frameBegin int64, slot byte) {
+	waitNs := (frameBegin - time.Nanoseconds())
+	waitNs += int64(slot) * SLOT_TIME + SLOT_TIME
+
+	time.Sleep(waitNs)
+}
+
+
+// Return a packet if there was one, return a nil packet
+// empty=true and a nil error if there was no packet and
+// the read timed out, return nil, false and an error
+// otherwise.
 func readSlot(conn *MultiCastConn) (*Packet, bool, os.Error) {
 	byteSlice := make([]byte, PACKET_SIZE)
 	buffer := bytes.NewBuffer(byteSlice)
@@ -51,6 +70,9 @@ func readSlot(conn *MultiCastConn) (*Packet, bool, os.Error) {
 	n, err := conn.Read(byteSlice)
 
 	if err != nil {
+		if err.(net.Error).Timeout() {
+			return nil, true, nil
+		}
 		return nil, false, err
 	}
 
@@ -79,7 +101,7 @@ func readSlot(conn *MultiCastConn) (*Packet, bool, os.Error) {
 
 
 func sendPacket(conn *MultiCastConn, payload string, slot byte) os.Error {
-	ms := time.Nanoseconds() / 10e6
+	ms := time.Nanoseconds() / 1e6
 
 	p := NewPacket([]byte(payload), slot, ms)
 
@@ -112,6 +134,7 @@ func main() {
 	conn, cerr := JoinMulticast(ip, strconv.Itoa(port + team))
 
 	// Limit the max. read time to the slot time
+	log.Printf("Setting read timeout to: %d ns", SLOT_TIME)
 	conn.SetReadTimeout(SLOT_TIME)
 
 	if cerr != nil {
@@ -123,13 +146,18 @@ func main() {
 	currentPayload := source.Data()
 	searchNewSlot := false
 
+	syncWithNextFrame()
+
 	for {
-		syncWithNextFrame()
+		frameBegin := frameBeginTime()
+		go log.Println("Begin!")
 
 		for i:= byte(0); i < SLOTS; i++ {
+			go log.Println("Slot", i)
+
 			// We have a good slot and this is our slot, send!
 			if i == mySlot && !searchNewSlot {
-				syncWithSlotCenter(mySlot)
+				syncWithSlotCenter(frameBegin, mySlot)
 				sendPacket(conn, currentPayload, mySlot)
 			}
 
@@ -144,19 +172,22 @@ func main() {
 				mySlot = i
 			}
 
-			stringPayload := string(packet.Payload[:])
+			// No empty slot, a packet was there
+			if packet != nil {
+				stringPayload := string(packet.Payload[:])
 
-			// Detect collision
-			if(i == mySlot && stringPayload != currentPayload) {
-				searchNewSlot = true
-				sink.Feed(fmt.Sprintf("Collision in slot %d!", i))
-			} else {
-				currentPayload = source.Data()
+				// Detect collision
+				if(i == mySlot && stringPayload != currentPayload) {
+					searchNewSlot = true
+					sink.Feed(fmt.Sprintf("Collision in slot %d!", i))
+				} else {
+					currentPayload = source.Data()
+				}
+
+				sink.Feed(stringPayload)
 			}
 
-			sink.Feed(stringPayload)
-
-			syncWithSlotEnd(i)
+			syncWithSlotEnd(frameBegin, i)
 		}
 	}
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"net"
-	"fmt"
 	"log"
 	"os"
 	"bytes"
@@ -43,7 +42,7 @@ func JoinMulticast(host, port string) (*MultiCastConn, os.Error) {
         if e != nil {
                 return nil, e
         }
-        fmt.Println("Joined to multicast IP", ua.IP, "on port", ua.Port)
+        log.Println("Joined to multicast IP", ua.IP, "on port", ua.Port)
         return &MultiCastConn{c, ua}, nil
 }
 
@@ -78,9 +77,9 @@ func Listener(conn *MultiCastConn, sync chan bool) {
 		packet, perr := NewPacketFromReader(buffer)
 
 		if perr == nil {
-			fmt.Println(conn, "Received:", packet)
+			log.Println(conn, "Received:", packet)
 		} else {
-			fmt.Println(conn, "Packet error:", perr)
+			log.Println(conn, "Packet error:", perr)
 		}
 
 		// buffer.Reset()
