@@ -3,10 +3,10 @@ package main
 import (
 	"os"
 	"fmt"
-	"tdm"
 	"net"
-	"time"
 	"log"
+	"flag"
+	"time"
 	"bytes"
 	"strconv"
 )
@@ -111,13 +111,23 @@ func sendPacket(conn *MultiCastConn, payload []byte, slot byte) os.Error {
 }
 
 
+var g_station *int = flag.Int("station", 1, "Station number")
+var g_port *int = flag.Int("port", 15000, "Base port, real port = port + team")
+var g_team *int = flag.Int("team", 17, "Team number")
+var g_ip *string = flag.String("ip", "225.10.1.2", "Multicast address to listen on")
+var g_logDir *string = flag.String("logdir", "../log/", "Log directory")
+
 func main() {
-	team, station := 17, 1
-	logPath := "/home/nemo/Code/tdm/go/log/"
+	flag.Parse()
 
-	source := tdm.NewSource(team, station)
+	team, station := *g_team, *g_station
 
-	sink, serr := tdm.NewSink(team, station, logPath)
+	logPath := *g_logDir
+
+	// Setup source & sink
+	source := NewSource(team, station)
+
+	sink, serr := NewSink(team, station, logPath)
 
 	if serr != nil {
 		fmt.Println(serr.String())
@@ -128,8 +138,8 @@ func main() {
 	defer sink.Stop()
 
 	// Open network connection
-	ip := "225.10.1.2"
-	port := 15000
+	ip := *g_ip
+	port := *g_port
 
 	conn, cerr := JoinMulticast(ip, strconv.Itoa(port + team))
 
@@ -179,7 +189,7 @@ func main() {
 			if packet != nil {
 
 				// Detect collision
-				if(i == mySlot && packet.EqualPayload(currentPayload)) {
+				if i == mySlot && packet.EqualPayload(currentPayload) {
 					searchNewSlot = true
 					go log.Println("Collision in slot", i)
 					sink.Feed(fmt.Sprintf("Collision in slot %d!", i))
@@ -188,14 +198,9 @@ func main() {
 					go log.Println("Everything went fine, sent data.")
 				}
 
-				// FIXME broken for reasons unknown, hangs at
-				// collision 16
-				//sink.Feed(stringPayload)
-
-				sink.Feed(packet.Payload[:])
+				sink.Feed(packet.String())
 			}
 
-			go log.Println("Waiting for slot to finish")
 			syncWithSlotEnd(frameBegin, i)
 		}
 	}
