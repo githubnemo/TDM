@@ -89,47 +89,4 @@ func Listener(conn *MultiCastConn, sync chan bool) {
 }
 
 
-func _main() {
-	conn1, err1 := JoinMulticast("225.10.1.2", "15017")
 
-	if err1 != nil {
-		log.Fatal(err1.String())
-	}
-
-	conn2, err2 := JoinMulticast("225.10.1.2", "15017")
-
-	if err2 != nil {
-		log.Fatal(err2.String())
-	}
-
-	sync := make(chan bool)
-
-	go Listener(conn1, sync)
-	go Listener(conn2, sync)
-
-	<-sync
-	<-sync
-
-	log.Println("Sending...")
-
-	pack := NewPacket([]byte("foobar"), 0, 1)
-
-	n, err := pack.SendTo(conn1)
-
-	if err != nil {
-		log.Fatal(err.String())
-	}
-
-	log.Println("Sent", n, "Bytes")
-
-	// Wait for listeners before close
-	<-sync
-	<-sync
-
-	log.Println("Closing connection...")
-
-	conn1.Close()
-	conn2.Close()
-
-
-}
