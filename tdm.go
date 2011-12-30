@@ -155,6 +155,7 @@ func main() {
 	mySlot := byte(0)
 	currentPayload := source.Data()
 	searchNewSlot := false
+	packetSent := false
 
 	// Wait for next frame to begin and start process
 	syncWithNextFrame()
@@ -170,6 +171,7 @@ func main() {
 			if i == mySlot && !searchNewSlot {
 				syncWithSlotCenter(frameBegin, mySlot)
 				sendPacket(conn, currentPayload, mySlot)
+				packetSent = true
 				go log.Println("Sent package!")
 			}
 
@@ -181,23 +183,28 @@ func main() {
 
 			// Empty slot and in need of one? Take it!
 			if empty && searchNewSlot {
+				go log.Println("Using this slot as my new slot:", i)
 				mySlot = i
 				searchNewSlot = false
 			}
 
-			// No empty slot, a packet was there
-			if packet != nil {
+			// I sent a packet on my slot, look for collisions
+			if packet != nil && packetSent && i == mySlot {
+
+				packetSent = false
 
 				// Detect collision
-				if i == mySlot && packet.EqualPayload(currentPayload) {
+				if !packet.EqualPayload(currentPayload) {
 					searchNewSlot = true
-					go log.Println("Collision in slot", i)
 					sink.Feed(fmt.Sprintf("Collision in slot %d!", i))
+					go log.Println("Collision in slot", i)
 				} else {
 					currentPayload = source.Data()
-					go log.Println("Everything went fine, sent data.")
 				}
+			}
 
+			// Put every received packet in the sink
+			if packet != nil {
 				sink.Feed(packet.String())
 			}
 
