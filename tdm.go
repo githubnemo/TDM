@@ -7,12 +7,15 @@ import (
 	"log"
 	"flag"
 	"time"
+	"rand"
 	"bytes"
 	"strconv"
 	"io/ioutil"
 )
 
 const (
+	TEAM_NUMBER = 17
+
 	// Time per frame in nanoseconds
 	FRAME_TIME = 1 * 1e9
 
@@ -22,11 +25,6 @@ const (
 	// Time per slot in nanoseconds
 	SLOT_TIME = int64(FRAME_TIME / SLOTS)
 )
-
-// milli => 1e3
-// micro => 1e6
-// nano  => 1e9
-
 
 // Wait for next frame and return start time of next frame in NS
 func syncWithNextFrame() int64 {
@@ -151,9 +149,6 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 		frameBegin := frameBeginTime()
 
 		mySlot := nextSlot
-
-		// Log output
-		sink.Feed("Frame begin.")
 		go log.Println("Begin! Slot: ", mySlot)
 
 		for i:= byte(0); i < SLOTS; i++ {
@@ -220,42 +215,42 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 }
 
 
-
+// Command line parameters
 var g_station *int = flag.Int("station", 1, "Station number")
-var g_port *int = flag.Int("port", 15000, "Base port, real port = port + team")
-var g_team *int = flag.Int("team", 17, "Team number")
+var g_port *int = flag.Int("port", 15017, "Port to listen on")
 var g_ip *string = flag.String("ip", "225.10.1.2", "Multicast address to listen on")
 var g_logDir *string = flag.String("logdir", "../log/", "Log directory")
+
 
 func main() {
 	flag.Parse()
 
-	team, station := *g_team, *g_station
-
+	station := *g_station
 	logPath := *g_logDir
 
 	// Setup source & sink
-	source := NewSource(team, station)
-
-	sink, serr := NewSink(team, station, logPath)
+	source := NewSource(TEAM_NUMBER, station)
+	sink, serr := NewSink(TEAM_NUMBER, station, logPath)
 
 	if serr != nil {
-		fmt.Println(serr.String())
-		return
+		log.Fatal(serr)
 	}
 
 	sink.Start()
+
 	defer sink.Stop()
 
 	// Open network connection
 	ip := *g_ip
 	port := *g_port
 
-	conn, cerr := JoinMulticast(ip, strconv.Itoa(port + team))
+	conn, cerr := JoinMulticast(ip, strconv.Itoa(port))
 
 	if cerr != nil {
 		log.Fatal("JoinMulticast Error: ", cerr.String())
 	}
+
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
 	receiveLoop(source, sink, conn)
 }
