@@ -26,6 +26,7 @@ const (
 	SLOT_TIME = int64(FRAME_TIME / SLOTS)
 )
 
+
 // Wait for next frame and return start time of next frame in NS
 func syncWithNextFrame() int64 {
 	cns := time.Nanoseconds()
@@ -37,10 +38,12 @@ func syncWithNextFrame() int64 {
 	return startns
 }
 
+
 // Return timestamp of current frame beginning
 func frameBeginTime() int64 {
 	return time.Nanoseconds() / 1e9 * 1e9
 }
+
 
 func syncWithSlotCenter(frameBegin int64, slot byte) {
 	waitNs := (frameBegin - time.Nanoseconds())
@@ -70,10 +73,12 @@ func setProperReadTimeout(conn *MultiCastConn, frameBegin int64, slot byte) {
 }
 
 
-// Read SLOTS * PACKET_SIZE bytes from the connection and
-// return the first arrived packet.
+// Reads all bytes from the connection in a time interval set by
+// setProperReadTimeout().
 //
-// If there was more than one packet, collision will be true.
+// If there was more than one packet, collision will be true and the
+// first packet arrived will be returned. In case nothing was received
+// at all, empty will be true and packet will be nil.
 func readSlot(conn *MultiCastConn, frameBegin int64, slot byte) (p *Packet, empty bool, collision bool, err os.Error) {
 	setProperReadTimeout(conn, frameBegin, slot)
 
@@ -130,7 +135,6 @@ func findFreeSlot(occupiedSlots []int, currentFrame int) (next byte, ok bool) {
 
 
 func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
-	// initially use the first slot
 	nextSlot := byte(0)
 	currentPayload := source.Data()
 
@@ -152,6 +156,7 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 			go log.Println("Slot", i)
 
 			// We have a slot and the current slot is ours, send a packet
+			// with the next slot number we want to occupy.
 			if i == mySlot && !searchNewSlot {
 				// Determine new slot for next frame
 				if t, ok := findFreeSlot(occupiedSlots, frameNr); !ok {
@@ -178,6 +183,9 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 				log.Fatalf("Error while reading slot %d: %s", i, err.String())
 			}
 
+			// Collision detected, set this slot to occupied and by 50% chance
+			// start a search for a free slot. The randomness is an attempt to
+			// prevent both senders to search again.
 			if collision {
 				go log.Println("Collision in slot", i)
 
@@ -198,11 +206,11 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 			// calculate new payload.
 			if packet != nil && packetSent && i == mySlot && !collision {
 				packetSent = false
-
 				currentPayload = source.Data()
 			}
 
-			// Put every received packet in the sink
+			// Put every received packet in the sink and register the slot
+			// mentioned in the packet as occupied with this frame as origin
 			if packet != nil {
 				if 0 <= packet.Slot && packet.Slot < SLOTS {
 					occupiedSlots[packet.Slot] = frameNr
