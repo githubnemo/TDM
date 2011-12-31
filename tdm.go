@@ -76,7 +76,7 @@ func setProperReadTimeout(conn *MultiCastConn, frameBegin int64, slot byte) {
 // return the first arrived packet.
 //
 // If there was more than one packet, collision will be true.
-func readSlot(conn *MultiCastConn, frameBegin int64, slot byte) (p *Packet, collision bool, err os.Error) {
+func readSlot(conn *MultiCastConn, frameBegin int64, slot byte) (p *Packet, empty bool, collision bool, err os.Error) {
 	setProperReadTimeout(conn, frameBegin, slot)
 
 	// Read everything until timeout is hit
@@ -86,27 +86,27 @@ func readSlot(conn *MultiCastConn, frameBegin int64, slot byte) (p *Packet, coll
 		// Don't throw an error on a timeout (=> empty slot)
 		if v,ok := err.(net.Error); ok && v.Timeout() {
 			if len(data) == 0 {
-				return nil, false, nil
+				return nil, true, false, nil
 			}
 		} else {
-			return nil, false, err
+			return nil, false, false, err
 		}
 	}
 
 	buffer := bytes.NewBuffer(data)
 
 	if len(data) < PACKET_SIZE {
-		return nil, false, os.NewError(
+		return nil, false, false, os.NewError(
 			fmt.Sprintf("Invalid packet size: %d", len(data)))
 	}
 
 	packet, perr := NewPacketFromReader(buffer)
 
 	if perr != nil {
-		return nil, false, perr
+		return nil, false, false, perr
 	}
 
-	return packet, len(data) > PACKET_SIZE, nil
+	return packet, false, len(data) > PACKET_SIZE, nil
 }
 
 
@@ -179,7 +179,7 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 				}
 			}
 
-			packet, collision, err := readSlot(conn, frameBegin, i)
+			packet, empty, collision, err := readSlot(conn, frameBegin, i)
 
 			if err != nil {
 				log.Fatalf("Error while reading slot %d: %s", i, err.String())
