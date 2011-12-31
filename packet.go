@@ -83,10 +83,3 @@ func (p *Packet) SendTo(w io.Writer) (int64, os.Error) {
 
 	return pbuf.WriteTo(w)
 }
-
-
-func (p *Packet) EqualPayload(other []byte) bool {
-	// <= because len(p.Payload) == cap(p.Payload) in every case
-	return len(other) <= len(p.Payload) &&
-			bytes.Compare(other, p.Payload[:len(other)]) == 0
-}
