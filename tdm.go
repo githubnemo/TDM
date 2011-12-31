@@ -220,7 +220,7 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 				go log.Println("Received", packet.String())
 			}
 
-			// At the end of the frame: Search for free slot
+			// At the end of the frame: Search for free slot if needed
 			if searchNewSlot && i == SLOTS-1 {
 				if t,ok := findFreeSlot(occupiedSlots, frameNr); ok {
 					nextSlot = t
