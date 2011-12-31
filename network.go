@@ -4,7 +4,6 @@ import (
 	"net"
 	"log"
 	"os"
-	"bytes"
 )
 
 type MultiCastConn struct {
@@ -45,48 +44,3 @@ func JoinMulticast(host, port string) (*MultiCastConn, os.Error) {
         log.Println("Joined to multicast IP", ua.IP, "on port", ua.Port)
         return &MultiCastConn{c, ua}, nil
 }
-
-
-func Listener(conn *MultiCastConn, sync chan bool) {
-	defer func() {
-		sync <- true
-	}()
-	sync <- true
-
-	byteSlice := make([]byte, 1024)
-	buffer := bytes.NewBuffer(byteSlice)
-
-	// 50ms for each slot
-	conn.SetReadTimeout(50 * 10e6)
-
-	for {
-		n, err := conn.Read(byteSlice)
-
-		if err != nil {
-			log.Fatal(err.String())
-		}
-
-		buffer.Write(byteSlice)
-
-		if n != PACKET_SIZE {
-			continue
-		}
-
-		log.Println("Enough bytes... Creating packet instance!")
-
-		packet, perr := NewPacketFromReader(buffer)
-
-		if perr == nil {
-			log.Println(conn, "Received:", packet)
-		} else {
-			log.Println(conn, "Packet error:", perr)
-		}
-
-		// buffer.Reset()
-
-		return
-	}
-}
-
-
-
