@@ -3,11 +3,13 @@ package main
 import (
 	"os"
 	"fmt"
+	"net"
 	"log"
 	"flag"
 	"time"
 	"bytes"
 	"strconv"
+	"io/ioutil"
 )
 
 const (
@@ -58,27 +60,44 @@ func syncWithSlotEnd(frameBegin int64, slot byte) {
 }
 
 
+// Sets the read timeout according to the elapsed time of the slot.
+func setProperReadTimeout(conn *MultiCastConn, frameBegin int64, slot byte) {
+	now := time.Nanoseconds()
+
+	// rest slot time = SLOT_TIME - elapsed slot time
+	timeout := SLOT_TIME - (now - (frameBegin + int64(slot) * SLOT_TIME))
+	timeout -= 20e6 // some threshold for code execution after read
+
+	conn.SetReadTimeout(timeout)
+}
+
+
 // Read SLOTS * PACKET_SIZE bytes from the connection and
 // return the first arrived packet.
 //
 // If there was more than one packet, collision will be true.
-func readSlot(conn *MultiCastConn) (p *Packet, collision bool, err os.Error) {
-	byteSlice := make([]byte, SLOTS * PACKET_SIZE)
-	buffer := bytes.NewBuffer(byteSlice)
+func readSlot(conn *MultiCastConn, frameBegin int64, slot byte) (p *Packet, collision bool, err os.Error) {
+	setProperReadTimeout(conn, frameBegin, slot)
 
-	// Read SLOTS*PACKET_SIZE bytes. Captures all packages
-	// that were sent in this time slot.
-	n, err := conn.Read(byteSlice)
+	// Read everything until timeout is hit
+	data, err := ioutil.ReadAll(conn)
 
 	if err != nil {
-		return nil, false, err
+		// Don't throw an error on a timeout (=> empty slot)
+		if v,ok := err.(net.Error); ok && v.Timeout() {
+			if len(data) == 0 {
+				return nil, false, nil
+			}
+		} else {
+			return nil, false, err
+		}
 	}
 
-	buffer.Write(byteSlice[:n])
+	buffer := bytes.NewBuffer(data)
 
-	if n < PACKET_SIZE {
+	if len(data) < PACKET_SIZE {
 		return nil, false, os.NewError(
-			fmt.Sprintf("Invalid packet size: %d", n))
+			fmt.Sprintf("Invalid packet size: %d", len(data)))
 	}
 
 	packet, perr := NewPacketFromReader(buffer)
@@ -87,7 +106,7 @@ func readSlot(conn *MultiCastConn) (p *Packet, collision bool, err os.Error) {
 		return nil, false, perr
 	}
 
-	return packet, n > PACKET_SIZE, nil
+	return packet, len(data) > PACKET_SIZE, nil
 }
 
 
@@ -123,6 +142,8 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 	upcomingSlots := make([]bool, SLOTS)
 
 
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+
 	// Wait for next frame to begin and start process
 	syncWithNextFrame()
 
@@ -133,32 +154,39 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 
 		// Log output
 		sink.Feed("Frame begin.")
-		go log.Println("Begin!")
+		go log.Println("Begin! Slot: ", mySlot)
 
 		for i:= byte(0); i < SLOTS; i++ {
 			go log.Println("Slot", i)
 
 			// We have a slot and the current slot is ours, send a packet
 			if i == mySlot && !searchNewSlot {
-				syncWithSlotCenter(frameBegin, mySlot)
-
 				// Determine new slot for next frame
 				if t, ok := findFreeSlot(upcomingSlots); !ok {
 					searchNewSlot = true
 
 				} else {
 					nextSlot = t
-					sendPacket(conn, currentPayload, nextSlot)
 					packetSent = true
+
+					// Do the send concurrently so we don't affect the read
+					go func() {
+						syncWithSlotCenter(frameBegin, mySlot)
+						sendPacket(conn, currentPayload, nextSlot)
+					}()
 
 					go log.Println("Sent package!")
 				}
 			}
 
-			packet, collision, err := readSlot(conn)
+			packet, collision, err := readSlot(conn, frameBegin, i)
 
 			if err != nil {
 				log.Fatalf("Error while reading slot %d: %s", i, err.String())
+			}
+
+			if collision {
+				go log.Println("Collision in slot", i)
 			}
 
 			// I sent a packet on my slot, no collisions, packet sent!
@@ -170,7 +198,7 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 
 			// Put every received packet in the sink
 			if packet != nil {
-				if packet.Slot < SLOTS {
+				if 0 <= packet.Slot && packet.Slot < SLOTS {
 					upcomingSlots[packet.Slot] = false
 				}
 
@@ -227,14 +255,6 @@ func main() {
 
 	if cerr != nil {
 		log.Fatal("JoinMulticast Error: ", cerr.String())
-	}
-
-	// Limit the max. read time to the slot time
-	log.Printf("Setting read timeout to: %d ns", SLOT_TIME)
-	conn.SetReadTimeout(SLOT_TIME)
-
-	if cerr != nil {
-		log.Fatal("Network join error: ", cerr.String())
 	}
 
 	receiveLoop(source, sink, conn)
