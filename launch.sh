@@ -2,7 +2,6 @@
 
 PIDS=""
 
-
 cleanup() {
 	for i in $PIDS; do
 		echo "Killing $i"
