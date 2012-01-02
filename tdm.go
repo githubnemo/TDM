@@ -145,8 +145,6 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 	currentPayload := source.Data()
 
 	searchNewSlot := true	// indicator that we need a new slot
-	packetSent := false		// indicator that a packet was sent in the current slot
-
 	occupiedSlots := make([]int, SLOTS)
 
 	// Wait for next frame to begin and start process
@@ -154,12 +152,15 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 
 	for frameNr := 1; ; frameNr++ {
 		frameBegin := frameBeginTime()
-
 		mySlot := nextSlot
-		go log.Println("Begin! Slot: ", mySlot)
+
+		go log.Println("Begin! Slot: ", mySlot, searchNewSlot)
 
 		for i:= byte(0); i < SLOTS; i++ {
 			go log.Println("Slot", i)
+
+			// No packet was sent in this slot yet
+			packetSent := false
 
 			// We have a slot and the current slot is ours, send a packet
 			// with the next slot number we want to occupy.
@@ -192,15 +193,12 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 			// Collision detected, set this slot to occupied and by 50% chance
 			// start a search for a free slot. The randomness is an attempt to
 			// prevent both senders to search again.
-			if collision {
+			if collision && packetSent {
 				go log.Println("Collision in slot", i)
 
 				occupiedSlots[i] = frameNr
 
-				// search new slot 50% of the time
-				if rand.Int() % 2 == 1 {
-					searchNewSlot = true
-				}
+				searchNewSlot = true
 			}
 
 			// Mark slot as empty if it's occupation is older than one frame
@@ -222,7 +220,7 @@ func receiveLoop(source *Source, sink *Sink, conn *MultiCastConn) {
 					occupiedSlots[packet.Slot] = frameNr
 				}
 
-				sink.Feed(fmt.Sprintf("Received on slot %d: %s", i, packet.String()))
+				sink.Feed(fmt.Sprintf("%d: Received on slot %d: %s", time.Nanoseconds() / 1e6, i, packet.String()))
 				go log.Println("Received", packet.String())
 			}
 
