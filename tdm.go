@@ -125,12 +125,18 @@ func sendPacket(conn *MultiCastConn, payload []byte, slot byte) os.Error {
 
 
 func findFreeSlot(occupiedSlots []int, currentFrame int) (next byte, ok bool) {
+	slots := make([]int, len(occupiedSlots))
 	for i,e := range occupiedSlots {
 		if e == 0 || (currentFrame - e) > 1 {
-			return byte(i), true
+			slots = append(slots, i)
 		}
 	}
-	return 0, false
+
+	if len(slots) == 0 {
+		return 0, false
+	}
+
+	return byte(slots[rand.Intn(len(slots))]), true
 }
 
 
@@ -270,6 +276,10 @@ func main() {
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	log.SetPrefix(fmt.Sprintf("Station %d: ", station))
+
+	// Reseed the PRNG for each station
+	rand.Seed(int64(station) * 1e6)
 
 	receiveLoop(source, sink, conn)
 }
