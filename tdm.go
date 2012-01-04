@@ -129,7 +129,8 @@ func sendPacket(conn *MultiCastConn, payload []byte, slot byte) os.Error {
 
 
 func findFreeSlot(occupiedSlots []int, currentFrame int) (next byte, ok bool) {
-	slots := make([]int, len(occupiedSlots))
+	slots := make([]int, 0)
+
 	for i,e := range occupiedSlots {
 		if e == 0 || (currentFrame - e) > 1 {
 			slots = append(slots, i)
@@ -248,7 +249,6 @@ var g_port *int = flag.Int("port", 15017, "Port to listen on")
 var g_ip *string = flag.String("ip", "225.10.1.2", "Multicast address to listen on")
 var g_logDir *string = flag.String("logdir", "../log/", "Log directory")
 
-
 func main() {
 	flag.Parse()
 
@@ -281,7 +281,7 @@ func main() {
 	log.SetPrefix(fmt.Sprintf("Station %d: ", station))
 
 	// Reseed the PRNG for each station
-	rand.Seed(int64(station) * 1e6)
+	rand.Seed(int64(int(station) * rand.Int()))
 
 	receiveLoop(source, sink, conn)
 }
