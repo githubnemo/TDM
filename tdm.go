@@ -33,7 +33,9 @@ func syncWithNextFrame() int64 {
 
 	startns := (cns / 1e9 + 1) * 1e9
 
-	time.Sleep(startns - cns)
+	wait := startns - cns
+	go log.Println("syncWithNextFrame: Waiting", wait)
+	time.Sleep(wait)
 
 	return startns
 }
@@ -56,6 +58,8 @@ func syncWithSlotCenter(frameBegin int64, slot byte) {
 func syncWithSlotEnd(frameBegin int64, slot byte) {
 	waitNs := (frameBegin - time.Nanoseconds())
 	waitNs += int64(slot) * SLOT_TIME + SLOT_TIME
+
+	go log.Println("syncWithSlotEnd: waiting...", waitNs)
 
 	time.Sleep(waitNs)
 }
