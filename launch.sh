@@ -11,8 +11,11 @@ cleanup() {
 
 trap cleanup 1 2 3 6
 
-for i in `seq 1 $1`; do
-	(./tdm -station=$i) &
+NUM=$1
+shift 1
+
+for i in `seq 1 $NUM`; do
+	(./tdm -station=$i $@) &
 
 	if [ -z "$PIDS" ]; then
 		PIDS="$!"
