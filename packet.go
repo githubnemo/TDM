@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"bytes"
 	"encoding/binary"
+	"time"
 )
 
 // Packet size in byte
@@ -68,8 +69,9 @@ func NewPacketFromReader(r byteReader) (*Packet, os.Error) {
 
 
 func (p *Packet) String() string {
-	return fmt.Sprintf("Packet{Payload: %s, Slot: %d, Time: %d}\n",
-					   p.Payload, p.Slot, p.Time)
+	theTime := time.NanosecondsToUTC(p.Time * 1e6)
+	return fmt.Sprintf("Packet{Payload: %s, Slot: %d, Time: %s}\n",
+					   p.Payload, p.Slot, theTime.Format(time.StampNano))
 }
 
 
